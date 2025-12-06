@@ -1,1 +1,1 @@
-cargo install --path codex-rs\bluenex-cli --locked --force
+cargo install --path codex-rs\blueprintlm-cli --locked --force

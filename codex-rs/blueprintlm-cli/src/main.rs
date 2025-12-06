@@ -1,7 +1,7 @@
 use anyhow::Context;
-use bluenex_exec::Cli as ExecCli;
-use bluenex_exec::Command as ExecCommand;
-use bluenex_exec::ReviewArgs;
+use blueprintlm_exec::Cli as ExecCli;
+use blueprintlm_exec::Command as ExecCommand;
+use blueprintlm_exec::ReviewArgs;
 use clap::Args;
 use clap::CommandFactory;
 use clap::Parser;
@@ -21,10 +21,17 @@ use codex_cli::login::run_login_with_device_code;
 use codex_cli::login::run_logout;
 use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_common::CliConfigOverrides;
+use codex_core::AuthManager;
+use codex_core::ConversationManager;
+use codex_core::NewConversation;
+use codex_core::git_info::get_git_repo_root;
 use codex_core::rollout::list::Cursor as SessionsCursor;
 use codex_core::rollout::list::get_conversations;
 use codex_execpolicy::ExecPolicyCheckCommand;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::user_input::UserInput;
 use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
 use codex_tui::AppExitInfo;
 use codex_tui::Cli as TuiCli;
@@ -54,10 +61,10 @@ use codex_core::features::is_known_feature_key;
     // If a sub‑command is given, ignore requirements of the default args.
     subcommand_negates_reqs = true,
     // The executable is sometimes invoked via a platform‑specific name like
-    // `bluenex-cli-x86_64-unknown-linux-musl`, but the help output should always use
-    // the generic `bluenex-cli` command name that users run.
-    bin_name = "bluenex-cli",
-    override_usage = "bluenex-cli [OPTIONS] [PROMPT]\n       bluenex-cli [OPTIONS] <COMMAND> [ARGS]"
+    // `blueprintlm-cli-x86_64-unknown-linux-musl`, but the help output should always use
+    // the generic `blueprintlm-cli` command name that users run.
+    bin_name = "blueprintlm-cli",
+    override_usage = "blueprintlm-cli [OPTIONS] [PROMPT]\n       blueprintlm-cli [OPTIONS] <COMMAND> [ARGS]"
 )]
 struct MultitoolCli {
     #[clap(flatten)]
@@ -237,7 +244,7 @@ struct LoginCommand {
 
     #[arg(
         long = "with-api-key",
-        help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | bluenex-cli login --with-api-key`)"
+        help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | blueprintlm-cli login --with-api-key`)"
     )]
     with_api_key: bool,
 
@@ -335,7 +342,7 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
     )];
 
     if let Some(session_id) = conversation_id {
-        let resume_cmd = format!("bluenex-cli resume {session_id}");
+        let resume_cmd = format!("blueprintlm-cli resume {session_id}");
         let command = if color_enabled {
             resume_cmd.cyan().to_string()
         } else {
@@ -497,7 +504,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            bluenex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
+            blueprintlm_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Ask(AskCommand {
             prompt,
@@ -505,41 +512,23 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             add_dir,
             cwd,
         })) => {
-            let mut stdin_buf = String::new();
-            let prompt_arg = if prompt == "-" {
-                std::io::stdin().read_to_string(&mut stdin_buf)?;
-                stdin_buf
-            } else {
-                prompt
-            };
-            let mut args = vec!["bluenex-cli".to_string()];
-            if skip_git_repo_check {
-                args.push("--skip-git-repo-check".to_string());
-            }
-            if let Some(cwd) = &cwd {
-                args.push("--cd".to_string());
-                args.push(cwd.display().to_string());
-            }
-            for dir in &add_dir {
-                args.push("--add-dir".to_string());
-                args.push(dir.display().to_string());
-            }
-            args.push(prompt_arg);
-            let mut exec_cli = ExecCli::try_parse_from(args)?;
-            prepend_config_flags(
-                &mut exec_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            bluenex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
+            run_ask(
+                prompt,
+                skip_git_repo_check,
+                add_dir,
+                cwd,
+                root_config_overrides,
+            )
+            .await?;
         }
         Some(Subcommand::Review(review_args)) => {
-            let mut exec_cli = ExecCli::try_parse_from(["bluenex-cli"])?;
+            let mut exec_cli = ExecCli::try_parse_from(["blueprintlm-cli"])?;
             exec_cli.command = Some(ExecCommand::Review(review_args));
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            bluenex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
+            blueprintlm_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::McpServer) => {
             codex_mcp_server::run_main(codex_linux_sandbox_exe, root_config_overrides).await?;
@@ -638,7 +627,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                         .await;
                     } else if login_cli.api_key.is_some() {
                         eprintln!(
-                            "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | bluenex-cli login --with-api-key`."
+                            "The --api-key flag is no longer supported. Pipe the key instead, e.g. `printenv OPENAI_API_KEY | blueprintlm-cli login --with-api-key`."
                         );
                         std::process::exit(1);
                     } else if login_cli.with_api_key {
@@ -767,7 +756,7 @@ fn prepend_config_flags(
         .splice(0..0, cli_config_overrides.raw_overrides);
 }
 
-/// Build the final `TuiCli` for a `bluenex-cli resume` invocation.
+/// Build the final `TuiCli` for a `blueprintlm-cli resume` invocation.
 fn finalize_resume_interactive(
     mut interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
@@ -777,7 +766,7 @@ fn finalize_resume_interactive(
     resume_cli: TuiCli,
 ) -> TuiCli {
     // Start with the parsed interactive CLI so resume shares the same
-    // configuration surface area as `bluenex-cli` without additional flags.
+    // configuration surface area as `blueprintlm-cli` without additional flags.
     let resume_session_id = session_id;
     interactive.resume_picker = resume_session_id.is_none() && !last;
     interactive.resume_last = last;
@@ -793,7 +782,7 @@ fn finalize_resume_interactive(
     interactive
 }
 
-/// Merge flags provided to `bluenex-cli resume` so they take precedence over any
+/// Merge flags provided to `blueprintlm-cli resume` so they take precedence over any
 /// root-level flags. Only overrides fields explicitly set on the resume-scoped
 /// CLI. Also appends `-c key=value` overrides with highest precedence.
 fn merge_resume_cli_flags(interactive: &mut TuiCli, resume_cli: TuiCli) {
@@ -842,8 +831,89 @@ fn merge_resume_cli_flags(interactive: &mut TuiCli, resume_cli: TuiCli) {
 
 fn print_completion(cmd: CompletionCommand) {
     let mut app = MultitoolCli::command();
-    let name = "bluenex-cli";
+    let name = "blueprintlm-cli";
     generate(cmd.shell, &mut app, name, &mut std::io::stdout());
+}
+
+async fn run_ask(
+    prompt: String,
+    skip_git_repo_check: bool,
+    add_dir: Vec<PathBuf>,
+    cwd: Option<PathBuf>,
+    root_config_overrides: CliConfigOverrides,
+) -> anyhow::Result<()> {
+    let mut stdin_buf = String::new();
+    let prompt_text = if prompt == "-" {
+        std::io::stdin().read_to_string(&mut stdin_buf)?;
+        stdin_buf
+    } else {
+        prompt
+    };
+
+    let cli_overrides = root_config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    let config_overrides = ConfigOverrides {
+        cwd: cwd.clone(),
+        additional_writable_roots: add_dir.clone(),
+        ..Default::default()
+    };
+    let config = Config::load_with_cli_overrides(cli_overrides, config_overrides).await?;
+
+    if !skip_git_repo_check && get_git_repo_root(&config.cwd).is_none() {
+        eprintln!("Not inside a trusted directory and --skip-git-repo-check was not specified.");
+        std::process::exit(1);
+    }
+
+    let auth_manager = AuthManager::shared(
+        config.codex_home.clone(),
+        true,
+        config.cli_auth_credentials_store_mode,
+    );
+    let conversation_manager = ConversationManager::new(auth_manager, SessionSource::Cli);
+    let NewConversation { conversation, .. } = conversation_manager
+        .new_conversation(config.clone())
+        .await?;
+
+    let op = Op::UserTurn {
+        cwd: config.cwd.clone(),
+        approval_policy: config.approval_policy,
+        sandbox_policy: config.sandbox_policy.clone(),
+        model: config.model.clone(),
+        effort: config.model_reasoning_effort,
+        summary: config.model_reasoning_summary,
+        final_output_json_schema: None,
+        items: vec![UserInput::Text {
+            text: prompt_text.clone(),
+        }],
+    };
+    conversation.submit(op).await?;
+
+    let mut final_message = None;
+    while let Ok(event) = conversation.next_event().await {
+        match event.msg {
+            EventMsg::TaskComplete(done) => {
+                final_message = done.last_agent_message;
+                break;
+            }
+            EventMsg::StreamError(err) => {
+                eprintln!("{}", err.message);
+                break;
+            }
+            EventMsg::Error(err) => eprintln!("{}", err.message),
+            EventMsg::Warning(warn) => eprintln!("{}", warn.message),
+            EventMsg::ShutdownComplete => break,
+            _ => {}
+        }
+    }
+
+    let _ = conversation.submit(Op::Shutdown).await;
+
+    if let Some(msg) = final_message {
+        println!("{msg}");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -857,7 +927,7 @@ mod tests {
     #[test]
     fn ask_subcommand_parses_prompt() {
         let cli = MultitoolCli::try_parse_from([
-            "bluenex-cli",
+            "blueprintlm-cli",
             "ask",
             "--skip-git-repo-check",
             "-C",
@@ -945,7 +1015,7 @@ mod tests {
             lines,
             vec![
                 "Token usage: total=2 input=0 output=2".to_string(),
-                "To continue this session, run bluenex-cli resume 123e4567-e89b-12d3-a456-426614174000"
+                "To continue this session, run blueprintlm-cli resume 123e4567-e89b-12d3-a456-426614174000"
                     .to_string(),
             ]
         );
@@ -962,7 +1032,7 @@ mod tests {
     #[test]
     fn resume_model_flag_applies_when_no_root_flags() {
         let interactive =
-            finalize_from_args(["bluenex-cli", "resume", "-m", "gpt-5.1-test"].as_ref());
+            finalize_from_args(["blueprintlm-cli", "resume", "-m", "gpt-5.1-test"].as_ref());
 
         assert_eq!(interactive.model.as_deref(), Some("gpt-5.1-test"));
         assert!(interactive.resume_picker);
@@ -972,7 +1042,7 @@ mod tests {
 
     #[test]
     fn resume_picker_logic_none_and_not_last() {
-        let interactive = finalize_from_args(["bluenex-cli", "resume"].as_ref());
+        let interactive = finalize_from_args(["blueprintlm-cli", "resume"].as_ref());
         assert!(interactive.resume_picker);
         assert!(!interactive.resume_last);
         assert_eq!(interactive.resume_session_id, None);
@@ -981,7 +1051,7 @@ mod tests {
 
     #[test]
     fn resume_picker_logic_last() {
-        let interactive = finalize_from_args(["bluenex-cli", "resume", "--last"].as_ref());
+        let interactive = finalize_from_args(["blueprintlm-cli", "resume", "--last"].as_ref());
         assert!(!interactive.resume_picker);
         assert!(interactive.resume_last);
         assert_eq!(interactive.resume_session_id, None);
@@ -990,7 +1060,7 @@ mod tests {
 
     #[test]
     fn resume_picker_logic_with_session_id() {
-        let interactive = finalize_from_args(["bluenex-cli", "resume", "1234"].as_ref());
+        let interactive = finalize_from_args(["blueprintlm-cli", "resume", "1234"].as_ref());
         assert!(!interactive.resume_picker);
         assert!(!interactive.resume_last);
         assert_eq!(interactive.resume_session_id.as_deref(), Some("1234"));
@@ -999,7 +1069,7 @@ mod tests {
 
     #[test]
     fn resume_all_flag_sets_show_all() {
-        let interactive = finalize_from_args(["bluenex-cli", "resume", "--all"].as_ref());
+        let interactive = finalize_from_args(["blueprintlm-cli", "resume", "--all"].as_ref());
         assert!(interactive.resume_picker);
         assert!(interactive.resume_show_all);
     }
@@ -1008,7 +1078,7 @@ mod tests {
     fn resume_merges_option_flags_and_full_auto() {
         let interactive = finalize_from_args(
             [
-                "bluenex-cli",
+                "blueprintlm-cli",
                 "resume",
                 "sid",
                 "--oss",
@@ -1065,7 +1135,7 @@ mod tests {
     fn resume_merges_dangerously_bypass_flag() {
         let interactive = finalize_from_args(
             [
-                "bluenex-cli",
+                "blueprintlm-cli",
                 "resume",
                 "--dangerously-bypass-approvals-and-sandbox",
             ]

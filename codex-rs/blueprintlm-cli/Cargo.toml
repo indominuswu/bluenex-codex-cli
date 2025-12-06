@@ -1,11 +1,11 @@
 [package]
-name = "bluenex-cli"
+name = "blueprintlm-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "bluenex"
+name = "blueprintlm"
 path = "src/main.rs"
 
 [lib]
@@ -26,7 +26,7 @@ codex-chatgpt = { workspace = true }
 codex-cloud-tasks = { path = "../cloud-tasks" }
 codex-common = { workspace = true, features = ["cli"] }
 codex-core = { workspace = true }
-bluenex-exec = { workspace = true }
+blueprintlm-exec = { workspace = true }
 codex-execpolicy = { workspace = true }
 codex-login = { workspace = true }
 codex-mcp-server = { workspace = true }

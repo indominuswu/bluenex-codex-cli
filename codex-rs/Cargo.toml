@@ -8,7 +8,7 @@ members = [
     "app-server-test-client",
     "apply-patch",
     "arg0",
-    "bluenex-cli",
+    "blueprintlm-cli",
     "feedback",
     "codex-backend-openapi-models",
     "cloud-tasks",
@@ -17,7 +17,7 @@ members = [
     "common",
     "core",
     "exec",
-    "bluenex-exec",
+    "blueprintlm-exec",
     "exec-server",
     "execpolicy",
     "execpolicy-legacy",
@@ -73,7 +73,7 @@ codex-client = { path = "codex-client" }
 codex-common = { path = "common" }
 codex-core = { path = "core" }
 codex-exec = { path = "exec" }
-bluenex-exec = { path = "bluenex-exec" }
+blueprintlm-exec = { path = "blueprintlm-exec" }
 codex-execpolicy = { path = "execpolicy" }
 codex-feedback = { path = "feedback" }
 codex-file-search = { path = "file-search" }

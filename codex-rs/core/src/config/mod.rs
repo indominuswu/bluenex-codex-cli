@@ -1346,7 +1346,7 @@ pub fn find_codex_home() -> std::io::Result<PathBuf> {
             "Could not find home directory",
         )
     })?;
-    Ok(home.join(".bluenex"))
+    Ok(home.join(".blueprintlm"))
 }
 
 /// Returns the path to the folder where Codex logs are stored. Does not verify
