@@ -69,7 +69,7 @@ pub use auth::CodexAuth;
 pub mod default_client;
 mod openai_model_info;
 pub mod project_doc;
-mod rollout;
+pub mod rollout;
 pub(crate) mod safety;
 pub mod seatbelt;
 pub mod shell;

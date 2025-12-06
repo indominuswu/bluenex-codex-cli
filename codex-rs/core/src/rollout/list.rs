@@ -21,7 +21,7 @@ use codex_protocol::protocol::RolloutLine;
 use codex_protocol::protocol::SessionSource;
 
 /// Returned page of conversation summaries.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, serde::Serialize)]
 pub struct ConversationsPage {
     /// Conversation summaries ordered newest first.
     pub items: Vec<ConversationItem>,
@@ -34,7 +34,7 @@ pub struct ConversationsPage {
 }
 
 /// Summary information for a conversation rollout file.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize)]
 pub struct ConversationItem {
     /// Absolute path to the rollout file.
     pub path: PathBuf,
@@ -102,7 +102,7 @@ impl<'de> serde::Deserialize<'de> for Cursor {
 /// Retrieve recorded conversation file paths with token pagination. The returned `next_cursor`
 /// can be supplied on the next call to resume after the last returned item, resilient to
 /// concurrent new sessions being appended. Ordering is stable by timestamp desc, then UUID desc.
-pub(crate) async fn get_conversations(
+pub async fn get_conversations(
     codex_home: &Path,
     page_size: usize,
     cursor: Option<&Cursor>,
